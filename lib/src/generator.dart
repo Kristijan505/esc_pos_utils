@@ -159,7 +159,9 @@ class Generator {
         width: lineHeight,
         height: heightPx,
       );
-      final Uint8List bytes = slice.getBytes(order: ChannelOrder.rgba);
+      grayscale(slice);
+      final imgBinary = slice.convert(numChannels: 1);
+      final bytes = imgBinary.getBytes();
       blobs.add(bytes);
       left += lineHeight;
     }

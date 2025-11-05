@@ -67,16 +67,134 @@ class Generator {
   Uint8List _encode(String text, {bool isKanji = false}) {
     // replace some non-ascii characters
     text = text
-        .replaceAll("’", "'")
+        .replaceAll("'", "'")
         .replaceAll("´", "'")
         .replaceAll("»", '"')
-        .replaceAll(" ", ' ')
+        .replaceAll(" ", ' ')
         .replaceAll("•", '.');
     if (!isKanji) {
+      // Check if CP1250 code table is being used
+      final codeTable = _styles.codeTable ?? _codeTable;
+      if (codeTable == 'CP1250') {
+        return _encodeCP1250(text);
+      }
       return latin1.encode(text);
     } else {
       return Uint8List.fromList(gbk_bytes.encode(text));
     }
+  }
+
+  /// Encode string to CP1250 (Windows-1250) encoding
+  Uint8List _encodeCP1250(String text) {
+    // CP1250 encoding map for Croatian and Central European characters
+    // Maps Unicode code points to CP1250 byte values
+    final Map<int, int> cp1250Map = {
+      // Croatian lowercase
+      0x0161: 0x9A, // š
+      0x010D: 0x9D, // č
+      0x0107: 0x9C, // ć
+      0x017E: 0x9E, // ž
+      0x0111: 0xA0, // đ
+      // Croatian uppercase
+      0x0160: 0x8A, // Š
+      0x010C: 0x8D, // Č
+      0x0106: 0x8C, // Ć
+      0x017D: 0x8E, // Ž
+      0x0110: 0x8F, // Đ
+      // Other Central European characters in CP1250
+      0x00E1: 0xE1, // á
+      0x00E9: 0xE9, // é
+      0x00ED: 0xED, // í
+      0x00F3: 0xF3, // ó
+      0x00FA: 0xFA, // ú
+      0x00FD: 0xFD, // ý
+      0x00E4: 0xE4, // ä
+      0x00F6: 0xF6, // ö
+      0x00FC: 0xFC, // ü
+      0x010F: 0xEF, // ď
+      0x0148: 0xF5, // ň
+      0x0159: 0xF8, // ř
+      0x0165: 0xFE, // ť
+      0x016F: 0xF9, // ů
+      0x015F: 0x9F, // ş
+      0x00E0: 0xE0, // à
+      0x00EC: 0xEC, // ì
+      0x00F2: 0xF2, // ò
+      0x00C1: 0xC1, // Á
+      0x00C9: 0xC9, // É
+      0x00CD: 0xCD, // Í
+      0x00D3: 0xD3, // Ó
+      0x00DA: 0xDA, // Ú
+      0x00DD: 0xDD, // Ý
+      0x00C4: 0xC4, // Ä
+      0x00D6: 0xD6, // Ö
+      0x00DC: 0xDC, // Ü
+      // Add more CP1250 characters as needed
+    };
+
+    final List<int> result = [];
+    final runes = text.runes;
+
+    for (final rune in runes) {
+      if (rune < 0x80) {
+        // ASCII characters (0-127) - same in CP1250
+        result.add(rune);
+      } else if (cp1250Map.containsKey(rune)) {
+        // Mapped characters (Croatian and Central European)
+        result.add(cp1250Map[rune]!);
+      } else if (rune >= 0x80 && rune <= 0xFF) {
+        // For characters in range 0x80-0xFF, check if they map directly
+        // Many CP1250 characters at 0x80-0xFF have the same byte value
+        // as their Unicode code point, but we need to be careful
+        // For now, we'll check if it's a common overlap
+        if (_isCP1250DirectMapping(rune)) {
+          result.add(rune);
+        } else {
+          // Character not in CP1250 - replace with question mark
+          result.add(0x3F); // '?'
+        }
+      } else {
+        // Character outside CP1250 range - replace with question mark
+        result.add(0x3F); // '?'
+      }
+    }
+
+    return Uint8List.fromList(result);
+  }
+
+  /// Check if a Unicode code point in range 0x80-0xFF maps directly to CP1250
+  /// This is true for many characters that are common between Unicode and CP1250
+  bool _isCP1250DirectMapping(int codePoint) {
+    // Characters that DON'T map directly in CP1250 (exceptions)
+    // These byte positions are used by special characters in CP1250
+    final Set<int> exceptions = {
+      0x80,
+      0x81,
+      0x82,
+      0x83,
+      0x84,
+      0x85,
+      0x86,
+      0x87,
+      0x88,
+      0x89, // Control chars
+      0x8A,
+      0x8C,
+      0x8D,
+      0x8E,
+      0x8F, // Used by Croatian uppercase (Š, Ć, Č, Ž, Đ)
+      0x90,
+      0x9A,
+      0x9C,
+      0x9D,
+      0x9E,
+      0x9F, // Used by Croatian lowercase and others (š, ć, č, ž, ş)
+      0xA0, // Used by đ
+      0xAD, // Soft hyphen
+      0xF9, // Used by ů
+      0xFE, // Used by ť
+    };
+    return !exceptions.contains(codePoint);
   }
 
   List _getLexemes(String text) {
@@ -119,7 +237,8 @@ class Generator {
     }
     if (value < 0 || value > maxInput) {
       throw Exception(
-          'Number is too large. Can only output up to $maxInput in $bytesNb bytes');
+        'Number is too large. Can only output up to $maxInput in $bytesNb bytes',
+      );
     }
 
     final List<int> res = <int>[];
@@ -267,9 +386,13 @@ class Generator {
   List<int> setStyles(PosStyles styles, {bool isKanji = false}) {
     List<int> bytes = [];
     if (styles.align != _styles.align) {
-      bytes += latin1.encode(styles.align == PosAlign.left
-          ? cAlignLeft
-          : (styles.align == PosAlign.center ? cAlignCenter : cAlignRight));
+      bytes +=
+          (styles.align == PosAlign.left
+                  ? cAlignLeft
+                  : (styles.align == PosAlign.center
+                        ? cAlignCenter
+                        : cAlignRight))
+              .codeUnits;
       _styles = _styles.copyWith(align: styles.align);
     }
 
@@ -286,8 +409,9 @@ class Generator {
       _styles = _styles.copyWith(reverse: styles.reverse);
     }
     if (styles.underline != _styles.underline) {
-      bytes +=
-          styles.underline ? cUnderline1dot.codeUnits : cUnderlineOff.codeUnits;
+      bytes += styles.underline
+          ? cUnderline1dot.codeUnits
+          : cUnderlineOff.codeUnits;
       _styles = _styles.copyWith(underline: styles.underline);
     }
 
@@ -325,8 +449,10 @@ class Generator {
         List.from(cCodeTable.codeUnits)
           ..add(_profile.getCodePageId(styles.codeTable)),
       );
-      _styles =
-          _styles.copyWith(align: styles.align, codeTable: styles.codeTable);
+      _styles = _styles.copyWith(
+        align: styles.align,
+        codeTable: styles.codeTable,
+      );
     } else if (_codeTable != null) {
       bytes += Uint8List.fromList(
         List.from(cCodeTable.codeUnits)
@@ -388,9 +514,7 @@ class Generator {
   List<int> feed(int n) {
     List<int> bytes = [];
     if (n >= 0 && n <= 255) {
-      bytes += Uint8List.fromList(
-        List.from(cFeedN.codeUnits)..add(n),
-      );
+      bytes += Uint8List.fromList(List.from(cFeedN.codeUnits)..add(n));
     }
     return bytes;
   }
@@ -433,8 +557,10 @@ class Generator {
   /// Beeps [n] times
   ///
   /// Beep [duration] could be between 50 and 450 ms.
-  List<int> beep(
-      {int n = 3, PosBeepDuration duration = PosBeepDuration.beep450ms}) {
+  List<int> beep({
+    int n = 3,
+    PosBeepDuration duration = PosBeepDuration.beep450ms,
+  }) {
     List<int> bytes = [];
     if (n <= 0) {
       return [];
@@ -456,9 +582,7 @@ class Generator {
   /// Reverse feed for [n] lines (if supported by the priner)
   List<int> reverseFeed(int n) {
     List<int> bytes = [];
-    bytes += Uint8List.fromList(
-      List.from(cReverseFeedN.codeUnits)..add(n),
-    );
+    bytes += Uint8List.fromList(List.from(cReverseFeedN.codeUnits)..add(n));
     return bytes;
   }
 
@@ -476,8 +600,9 @@ class Generator {
     List<PosColumn> nextRow = <PosColumn>[];
 
     for (int i = 0; i < cols.length; ++i) {
-      int colInd =
-          cols.sublist(0, i).fold(0, (int sum, col) => sum + col.width);
+      int colInd = cols
+          .sublist(0, i)
+          .fold(0, (int sum, col) => sum + col.width);
       double charWidth = _getCharWidth(cols[i].styles);
       double fromPos = _colIndToPosition(colInd);
       final double toPos =
@@ -494,18 +619,23 @@ class Generator {
         int realCharactersNb = encodedToPrint.length;
         if (realCharactersNb > maxCharactersNb) {
           // Print max possible and split to the next row
-          Uint8List encodedToPrintNextRow =
-              encodedToPrint.sublist(maxCharactersNb);
+          Uint8List encodedToPrintNextRow = encodedToPrint.sublist(
+            maxCharactersNb,
+          );
           encodedToPrint = encodedToPrint.sublist(0, maxCharactersNb);
           isNextRow = true;
-          nextRow.add(PosColumn(
+          nextRow.add(
+            PosColumn(
               textEncoded: encodedToPrintNextRow,
               width: cols[i].width,
-              styles: cols[i].styles));
+              styles: cols[i].styles,
+            ),
+          );
         } else {
           // Insert an empty col
-          nextRow.add(PosColumn(
-              text: '', width: cols[i].width, styles: cols[i].styles));
+          nextRow.add(
+            PosColumn(text: '', width: cols[i].width, styles: cols[i].styles),
+          );
         }
         // end rows splitting
         bytes += _text(
@@ -532,15 +662,19 @@ class Generator {
 
         if (toPrintNextRow.isNotEmpty) {
           isNextRow = true;
-          nextRow.add(PosColumn(
+          nextRow.add(
+            PosColumn(
               text: toPrintNextRow,
               containsChinese: true,
               width: cols[i].width,
-              styles: cols[i].styles));
+              styles: cols[i].styles,
+            ),
+          );
         } else {
           // Insert an empty col
-          nextRow.add(PosColumn(
-              text: '', width: cols[i].width, styles: cols[i].styles));
+          nextRow.add(
+            PosColumn(text: '', width: cols[i].width, styles: cols[i].styles),
+          );
         }
 
         // Print current row
@@ -774,8 +908,10 @@ class Generator {
   }) {
     List<int> bytes = [];
     if (colInd != null) {
-      double charWidth =
-          _getCharWidth(styles, maxCharsPerLine: maxCharsPerLine);
+      double charWidth = _getCharWidth(
+        styles,
+        maxCharsPerLine: maxCharsPerLine,
+      );
       double fromPos = _colIndToPosition(colInd);
 
       // Align
@@ -839,5 +975,6 @@ class Generator {
     bytes += emptyLines(linesAfter + 1);
     return bytes;
   }
+
   // ************************ (end) Internal command generators ************************
 }

@@ -86,22 +86,23 @@ class Generator {
   }
 
   /// Encode string to CP1250 (Windows-1250) encoding
+  /// Updated for SEWOO SLK-TS500 printer - uses direct byte mapping
   Uint8List _encodeCP1250(String text) {
-    // CP1250 encoding map for Croatian and Central European characters
-    // Maps Unicode code points to CP1250 byte values
+    // Direct byte mapping for Croatian characters (SEWOO SLK-TS500)
+    // These are the printer's built-in character positions
     final Map<int, int> cp1250Map = {
-      // Croatian lowercase
-      0x0161: 0x9A, // š
-      0x010D: 0x9D, // č
-      0x0107: 0x9C, // ć
-      0x017E: 0x9E, // ž
-      0x0111: 0xA0, // đ
       // Croatian uppercase
-      0x0160: 0x8A, // Š
-      0x010C: 0x8D, // Č
-      0x0106: 0x8C, // Ć
-      0x017D: 0x8E, // Ž
-      0x0110: 0x8F, // Đ
+      0x017D: 0x40, // Ž
+      0x0160: 0x5B, // Š
+      0x0110: 0x5C, // Đ
+      0x0106: 0x5D, // Ć
+      0x010C: 0x5E, // Č
+      // Croatian lowercase
+      0x017E: 0x60, // ž
+      0x0161: 0x7B, // š
+      0x0111: 0x7C, // đ
+      0x0107: 0x7D, // ć
+      0x010D: 0x7E, // č
       // Other Central European characters in CP1250
       0x00E1: 0xE1, // á
       0x00E9: 0xE9, // é
@@ -361,9 +362,19 @@ class Generator {
   /// (even after resetting)
   List<int> setGlobalCodeTable(String? codeTable) {
     List<int> bytes = [];
+    _codeTable = codeTable;
+
+    // CP1250 uses direct byte mapping (no code table command needed)
+    if (codeTable == 'CP1250') {
+      // Just turn Kanji OFF and use default printer character set
+      bytes += cKanjiOff.codeUnits;
+      _styles = _styles.copyWith(codeTable: codeTable);
+      return bytes;
+    }
+
+    // For other code tables, use standard ESC/POS commands
     // Always turn Kanji OFF before setting code table
     bytes += cKanjiOff.codeUnits;
-    _codeTable = codeTable;
     if (codeTable != null) {
       bytes += Uint8List.fromList(
         List.from(cCodeTable.codeUnits)..add(_profile.getCodePageId(codeTable)),
@@ -445,20 +456,24 @@ class Generator {
     }
 
     // Set code table (after Kanji OFF, before text)
-    // Always send code table if it's specified in styles or globally set
+    // CP1250 uses direct byte mapping (no code table command needed)
     final codeTableToUse = styles.codeTable ?? _codeTable;
-    if (codeTableToUse != null) {
-      // Only send if it's different from current, or if we need to ensure it's set
-      if (codeTableToUse != _styles.codeTable) {
-        bytes += Uint8List.fromList(
-          List.from(cCodeTable.codeUnits)
-            ..add(_profile.getCodePageId(codeTableToUse)),
-        );
-        _styles = _styles.copyWith(
-          align: styles.align,
-          codeTable: codeTableToUse,
-        );
-      }
+    if (codeTableToUse != null && codeTableToUse != 'CP1250') {
+      // Send code table command for non-CP1250 code tables
+      bytes += Uint8List.fromList(
+        List.from(cCodeTable.codeUnits)
+          ..add(_profile.getCodePageId(codeTableToUse)),
+      );
+      _styles = _styles.copyWith(
+        align: styles.align,
+        codeTable: codeTableToUse,
+      );
+    } else if (codeTableToUse == 'CP1250') {
+      // CP1250: Just update styles, no command needed
+      _styles = _styles.copyWith(
+        align: styles.align,
+        codeTable: codeTableToUse,
+      );
     }
 
     return bytes;
@@ -482,8 +497,10 @@ class Generator {
   }) {
     List<int> bytes = [];
     if (!containsChinese) {
+      // Use code table from styles or fall back to global code table
+      final codeTableToUse = styles.codeTable ?? _codeTable;
       bytes += _text(
-        _encode(text, isKanji: containsChinese, codeTable: styles.codeTable),
+        _encode(text, isKanji: containsChinese, codeTable: codeTableToUse),
         styles: styles,
         isKanji: containsChinese,
         maxCharsPerLine: maxCharsPerLine,
@@ -944,6 +961,9 @@ class Generator {
     }
 
     bytes += setStyles(styles, isKanji: isKanji);
+
+    // CP1250 uses direct byte mapping - no additional commands needed
+    // Text bytes are already encoded with the correct Croatian character mappings
 
     bytes += textBytes;
     return bytes;

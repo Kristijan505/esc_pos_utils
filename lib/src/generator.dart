@@ -64,7 +64,7 @@ class Generator {
     return charsPerLine;
   }
 
-  Uint8List _encode(String text, {bool isKanji = false}) {
+  Uint8List _encode(String text, {bool isKanji = false, String? codeTable}) {
     // replace some non-ascii characters
     text = text
         .replaceAll("'", "'")
@@ -74,8 +74,9 @@ class Generator {
         .replaceAll("•", '.');
     if (!isKanji) {
       // Check if CP1250 code table is being used
-      final codeTable = _styles.codeTable ?? _codeTable;
-      if (codeTable == 'CP1250') {
+      // Use provided codeTable, or fall back to styles/codeTable state
+      final activeCodeTable = codeTable ?? _styles.codeTable ?? _codeTable;
+      if (activeCodeTable == 'CP1250') {
         return _encodeCP1250(text);
       }
       return latin1.encode(text);
@@ -360,6 +361,8 @@ class Generator {
   /// (even after resetting)
   List<int> setGlobalCodeTable(String? codeTable) {
     List<int> bytes = [];
+    // Always turn Kanji OFF before setting code table
+    bytes += cKanjiOff.codeUnits;
     _codeTable = codeTable;
     if (codeTable != null) {
       bytes += Uint8List.fromList(
@@ -385,6 +388,11 @@ class Generator {
 
   List<int> setStyles(PosStyles styles, {bool isKanji = false}) {
     List<int> bytes = [];
+
+    // Always turn Kanji OFF first (before setting code table)
+    // This ensures the printer is in the correct mode for code page encoding
+    bytes += cKanjiOff.codeUnits;
+
     if (styles.align != _styles.align) {
       bytes +=
           (styles.align == PosAlign.left
@@ -436,29 +444,21 @@ class Generator {
       _styles = _styles.copyWith(height: styles.height, width: styles.width);
     }
 
-    // Set Kanji mode
-    if (isKanji) {
-      bytes += cKanjiOn.codeUnits;
-    } else {
-      bytes += cKanjiOff.codeUnits;
-    }
-
-    // Set local code table
-    if (styles.codeTable != null) {
-      bytes += Uint8List.fromList(
-        List.from(cCodeTable.codeUnits)
-          ..add(_profile.getCodePageId(styles.codeTable)),
-      );
-      _styles = _styles.copyWith(
-        align: styles.align,
-        codeTable: styles.codeTable,
-      );
-    } else if (_codeTable != null) {
-      bytes += Uint8List.fromList(
-        List.from(cCodeTable.codeUnits)
-          ..add(_profile.getCodePageId(_codeTable)),
-      );
-      _styles = _styles.copyWith(align: styles.align, codeTable: _codeTable);
+    // Set code table (after Kanji OFF, before text)
+    // Always send code table if it's specified in styles or globally set
+    final codeTableToUse = styles.codeTable ?? _codeTable;
+    if (codeTableToUse != null) {
+      // Only send if it's different from current, or if we need to ensure it's set
+      if (codeTableToUse != _styles.codeTable) {
+        bytes += Uint8List.fromList(
+          List.from(cCodeTable.codeUnits)
+            ..add(_profile.getCodePageId(codeTableToUse)),
+        );
+        _styles = _styles.copyWith(
+          align: styles.align,
+          codeTable: codeTableToUse,
+        );
+      }
     }
 
     return bytes;
@@ -467,9 +467,8 @@ class Generator {
   /// Sens raw command(s)
   List<int> rawBytes(List<int> cmd, {bool isKanji = false}) {
     List<int> bytes = [];
-    if (!isKanji) {
-      bytes += cKanjiOff.codeUnits;
-    }
+    // Always turn Kanji OFF - we don't need Chinese characters in Croatia!
+    bytes += cKanjiOff.codeUnits;
     bytes += Uint8List.fromList(cmd);
     return bytes;
   }
@@ -484,7 +483,7 @@ class Generator {
     List<int> bytes = [];
     if (!containsChinese) {
       bytes += _text(
-        _encode(text, isKanji: containsChinese),
+        _encode(text, isKanji: containsChinese, codeTable: styles.codeTable),
         styles: styles,
         isKanji: containsChinese,
         maxCharsPerLine: maxCharsPerLine,
@@ -613,7 +612,7 @@ class Generator {
         // CASE 1: containsChinese = false
         Uint8List encodedToPrint = cols[i].textEncoded != null
             ? cols[i].textEncoded!
-            : _encode(cols[i].text);
+            : _encode(cols[i].text, codeTable: cols[i].styles.codeTable);
 
         // If the col's content is too long, split it to the next row
         int realCharactersNb = encodedToPrint.length;
@@ -685,7 +684,11 @@ class Generator {
         // Print each lexeme using codetable OR kanji
         for (var j = 0; j < lexemes.length; ++j) {
           bytes += _text(
-            _encode(lexemes[j], isKanji: isLexemeChinese[j]),
+            _encode(
+              lexemes[j],
+              isKanji: isLexemeChinese[j],
+              codeTable: cols[i].styles.codeTable,
+            ),
             styles: cols[i].styles,
             colInd: colInd,
             colWidth: cols[i].width,
@@ -962,7 +965,11 @@ class Generator {
     int? colInd = 0;
     for (var i = 0; i < lexemes.length; ++i) {
       bytes += _text(
-        _encode(lexemes[i], isKanji: isLexemeChinese[i]),
+        _encode(
+          lexemes[i],
+          isKanji: isLexemeChinese[i],
+          codeTable: styles.codeTable,
+        ),
         styles: styles,
         colInd: colInd,
         isKanji: isLexemeChinese[i],

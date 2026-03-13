@@ -6,8 +6,6 @@
  * See LICENSE for distribution and usage details.
  */
 
-library esc_pos_utils;
-
 export './src/barcode.dart';
 export './src/capability_profile.dart';
 export './src/enums.dart';

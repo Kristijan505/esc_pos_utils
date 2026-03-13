@@ -19,7 +19,7 @@ class Generator {
 
   // Ticket config
   final PaperSize _paperSize;
-  CapabilityProfile _profile;
+  final CapabilityProfile _profile;
   int? _maxCharsPerLine;
   // Global styles
   String? _codeTable;

@@ -6,6 +6,8 @@
  * See LICENSE for distribution and usage details.
  */
 
+// ignore_for_file: constant_identifier_names
+
 import 'package:esc_pos_utils/src/commands.dart';
 import 'dart:convert';
 
